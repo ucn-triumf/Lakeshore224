@@ -4,50 +4,87 @@
 
 import midas
 import midas.frontend
+import midas.event
 from Lakeshore224 import Lakeshore224
-import time
-
 
 class LakeshoreEquipment(midas.frontend.EquipmentBase):
+    """Periodic equipment which reads all 12 Lakeshore224 inputs into one bank.
+
+    Attributes:
+        lakeshore (Lakeshore224): open connection to the temperature monitor.
+        read_failed (bool): whether the last readout raised, used to avoid
+            rewriting the equipment status to the ODB on every cycle.
     """
-    """
+
+    BANK_NAME = 'GRDT'
+
     def __init__(self, client):
         # The name of our equipment. This name will be used on the midas status
         # page, and our info will appear in /Equipment/MyPeriodicEquipment in
         # the ODB.
-        equip_name = "GradientLakeshore"
+        equip_name = "GradientTemps"
 
         default_common = midas.frontend.InitialEquipmentCommon()
         default_common.equip_type = midas.EQ_PERIODIC
+        default_common.read_when = midas.RO_ALWAYS
         default_common.buffer_name = "SYSTEM"
         default_common.trigger_mask = 0
         default_common.event_id = 1
         default_common.period_ms = 1000
-        default_common.read_when = midas.RO_RUNNING
         default_common.log_history = 10
 
-        midas.frontend.EquipmentBase.__init__(self, client, equip_name, default_common)
+        # Defaults for /Equipment/<name>/Settings. The base class applies these
+        # with update_structure_only=True, so values edited in the ODB survive a
+        # restart. mlogger labels the history tags of the variable <var> using
+        # the key "Names <var>", hence the bank name TEMP below.
+        default_settings = {'ip_address': 'lakeshore01.ucn.triumf.ca',
+                            f'Names {self.BANK_NAME}': ['A', 'B',
+                                                        'C1', 'C2', 'C3', 'C4', 'C5',
+                                                        'D1', 'D2', 'D3', 'D4', 'D5'],
+                            }
 
-        # connect to lakeshore
-        self.lakeshore = Lakeshore224("192.168.0.0") # TODO: fix this
+        midas.frontend.EquipmentBase.__init__(self, client, equip_name,
+                                             default_common, default_settings)
 
-        # set ODB settings
-        client.odb_set(f'{self.odb_settings_dir}/channel_names', 
-                       ['A', 'B', 
-                        'C1', 'C2', 'C3', 'C4', 'C5', 
-                        'D1', 'D2', 'D3', 'D4', 'D5'])
+        # connect to lakeshore - self.settings is populated by the base class
+        self.lakeshore = Lakeshore224(self.settings['ip_address'])
+        self.read_failed = False
 
         # You can set the status of the equipment (appears in the midas status page)
         self.set_status("Initialized")
 
     def readout_func(self):
+        """Read every channel and package the temperatures as a midas event.
 
-        # read data and record the time - always read all channels
-        temp = self.lakeshore.get_tempK('0')
+        Returns:
+            midas.event.Event|None: event with a single TID_DOUBLE bank holding
+                the 12 channel temperatures in K, or None if the read failed.
+        """
 
-        # set variables
-        self.client.odb_set(f'{self.odb_variables_dir}/temp_K', temp)
-        
+        # read data - always read all channels ('0' is the read-all input)
+        try:
+            temp = self.lakeshore.get_tempK('0')
+
+        # OSError covers socket failures; ValueError covers an unparseable
+        # response. Neither may propagate: FrontendBase.run() has no error
+        # handling, so an exception here kills the frontend.
+        except (OSError, ValueError) as err:
+            if not self.read_failed:
+                self.read_failed = True
+                self.set_status(f"Read failed: {err}", "redLight")
+            return None
+
+        # recovered from an earlier failure
+        if self.read_failed:
+            self.read_failed = False
+            self.set_status("Running")
+
+        # bank names must be exactly 4 characters
+        event = midas.event.Event()
+        event.create_bank(self.BANK_NAME, midas.TID_DOUBLE, temp)
+
+        return event
+
 class LakeshoreFrontend(midas.frontend.FrontendBase):
     """
     A frontend contains a collection of equipment.
@@ -55,20 +92,16 @@ class LakeshoreFrontend(midas.frontend.FrontendBase):
     """
     def __init__(self):
         # You must call __init__ from the base class.
-        midas.frontend.FrontendBase.__init__(self, "GradientLakeshoreFE")
+        midas.frontend.FrontendBase.__init__(self, "GradientTempsFE")
 
         # You can add equipment at any time before you call `run()`, but doing
         # it in __init__() seems logical.
         self.add_equipment(LakeshoreEquipment(self.client))
 
-    def __exit__(self, type, value, traceback):
-
-        # close all connections to lakeshore devices
+    def frontend_exit(self):
+        """Close all connections to lakeshore devices on the way out."""
         for equip in self.equipment.values():
             equip.lakeshore.close()
-
-        # continue exiting via base class
-        midas.frontend.FrontendBase.__exit__(self, type, value, traceback)
 
 if __name__ == "__main__":
     # The main executable is very simple - just create the frontend object,

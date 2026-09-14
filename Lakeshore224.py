@@ -25,12 +25,8 @@ class Lakeshore224(object):
                                     socket.SOCK_STREAM) # TCP
         self.socket.connect((ip, port))
 
-    def __del__(self):
-        self.close()
-    
     def close(self):
         """terminate the connection"""
-        self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
 
     def query(self, cmd:str):
