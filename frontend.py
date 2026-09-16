@@ -5,6 +5,7 @@
 import midas
 import midas.frontend
 import midas.event
+import time
 from Lakeshore224 import Lakeshore224
 
 class LakeshoreEquipment(midas.frontend.EquipmentBase):
@@ -47,8 +48,13 @@ class LakeshoreEquipment(midas.frontend.EquipmentBase):
                                              default_common, default_settings)
 
         # connect to lakeshore - self.settings is populated by the base class
-        self.lakeshore = Lakeshore224(self.settings['ip_address'])
+        try:
+            self.lakeshore = Lakeshore224(self.settings['ip_address'])
+        except Exception as err:
+            self.client.msg(f'{equip_name}: unable to connect to Lakeshore', is_error=True)
+            raise err from None
         self.read_failed = False
+        self.tlast = time.monotonic()
 
         # You can set the status of the equipment (appears in the midas status page)
         self.set_status("Initialized")
@@ -68,7 +74,7 @@ class LakeshoreEquipment(midas.frontend.EquipmentBase):
         # OSError covers socket failures; ValueError covers an unparseable
         # response. Neither may propagate: FrontendBase.run() has no error
         # handling, so an exception here kills the frontend.
-        except (OSError, ValueError) as err:
+        except (OSError, ValueError, ConnectionError) as err:
             if not self.read_failed:
                 self.read_failed = True
                 self.set_status(f"Read failed: {err}", "redLight")

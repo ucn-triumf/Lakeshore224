@@ -9,6 +9,7 @@ Sep 2026
 """
 import socket
 import numpy as np 
+import time
 
 class Lakeshore224(object):
 
@@ -21,9 +22,10 @@ class Lakeshore224(object):
     def __init__(self, ip, port=7777):
 
         # create connection
-        self.socket = socket.socket(socket.AF_INET,     # IPv4
-                                    socket.SOCK_STREAM) # TCP
-        self.socket.connect((ip, port))
+        self.socket = socket.create_connection((ip, port), timeout=10)
+
+        # set timeout on send/recv
+        self.socket.settimeout(1.0) # seconds
 
     def close(self):
         """terminate the connection"""
@@ -45,10 +47,14 @@ class Lakeshore224(object):
         # read response until terminator character is recorded
         msg = ""
         resp = ""
+        t0 = time.monotonic() # timeout on response time
         while self.TERM not in resp:
             resp = self.socket.recv(self.RECV_BYTES).decode()
             msg += resp
 
+            if time.monotonic()-t0 > 1:
+                raise TimeoutError("Lakeshore224 timeout on recv")
+            
         return msg.strip()
 
     def get_tempK(self, input):
