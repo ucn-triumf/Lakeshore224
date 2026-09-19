@@ -57,7 +57,7 @@ class LakeshoreEquipment(midas.frontend.EquipmentBase):
         self.tlast = time.monotonic()
 
         # You can set the status of the equipment (appears in the midas status page)
-        self.set_status("Initialized")
+        self.set_status("Running")
 
     def readout_func(self):
         """Read every channel and package the temperatures as a midas event.
@@ -78,12 +78,14 @@ class LakeshoreEquipment(midas.frontend.EquipmentBase):
             if not self.read_failed:
                 self.read_failed = True
                 self.set_status(f"Read failed: {err}", "redLight")
+                self.client.msg(f"Read failed: {err}", is_error=True)
             return None
 
         # recovered from an earlier failure
-        if self.read_failed:
-            self.read_failed = False
-            self.set_status("Running")
+        else:
+            if self.read_failed:
+                self.read_failed = False
+                self.set_status("Running")
 
         # bank names must be exactly 4 characters
         event = midas.event.Event()
